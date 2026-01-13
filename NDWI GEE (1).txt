@@ -1,0 +1,59 @@
+//SCRIPT ANALISIS NDWI
+//link GEE Project : https://code.earthengine.google.com/ab73d9d6eec9289e070557d3dd0a49a7
+
+
+var sentinel2_mask = function(image) {
+  var scl = image.select('SCL');
+  var mask = scl.neq(3)
+              .and(scl.neq(8))
+              .and(scl.neq(9))
+              .and(scl.neq(10))
+              .and(scl.neq(11));
+  return image.updateMask(mask);
+};
+
+var sentinel2 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+  .filterDate('2024-01-01', '2025-01-01')
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+  .map(sentinel2_mask)
+  .median()
+  .clip(geometry)
+  .multiply(0.0001);
+
+Map.centerObject(geometry);
+
+var Composite1182 = sentinel2.select(['B11', 'B8', 'B2']);
+var multispectral_param = {min: 0, max: 0.25};
+Map.addLayer(Composite1182, multispectral_param, 'Sentinel 2 (11-8-2)');
+
+var NDWI = sentinel2.normalizedDifference(['B3', 'B8']).rename('NDWI');
+var NDWIVis = {
+  min: -1, max: 1,
+  palette: ['#00441b', '#2a924a', '#78c679', '#c2e699', '#ffffcc', 
+            '#f7fcfd', '#deebf7', '#9ecae1', '#4292c6', '#084594']
+};
+Map.addLayer(NDWI, NDWIVis, 'NDWI');
+
+var threshold = 0.009;
+var waterMask = NDWI.gt(threshold);
+Map.addLayer(waterMask.updateMask(waterMask), {palette: ['blue']}, 'Area NDWI > 0.009');
+
+var pixelArea = ee.Image.pixelArea().divide(10000);
+var waterArea = waterMask.multiply(pixelArea);
+var totalArea = waterArea.reduceRegion({
+  reducer: ee.Reducer.sum(),
+  geometry: geometry,
+  scale: 10,
+  maxPixels: 1e13
+});
+print('Luas area dengan NDWI > 0.009 (hektar):', totalArea);
+
+var waterVector = waterMask.selfMask().reduceToVectors({
+  geometry: geometry,
+  scale: 10,
+  geometryType: 'polygon',
+  eightConnected: false,
+  labelProperty: 'water',
+  maxPixels: 1e13
+});
+Map.addLayer(waterVector, {color: 'cyan'}, 'Vektor NDWI > 0.009');
